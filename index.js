@@ -1,10 +1,51 @@
-import { correct, Grammarly } from "@stewartmcgown/grammarly-api";
+import { Grammarly } from "@stewartmcgown/grammarly-api";
 import express from "express";
 import cors from "cors";
 
 const app = express();
 
 app.use(cors());
+
+function applyTransform(text, alert) {
+  let {
+    begin,
+    end,
+    replacements: [replacement],
+  } = alert;
+  const shouldReplace = typeof replacement === "string";
+  if (!shouldReplace) {
+    return { text, diff: 0 };
+  }
+
+  const substringToTransform = text.substring(begin, end);
+  const transformed = shouldReplace
+    ? text.substring(0, begin) + replacement + text.substring(end)
+    : text;
+  const diff = shouldReplace
+    ? replacement.length - substringToTransform.length
+    : 0;
+  return {
+    text: transformed,
+    diff,
+  };
+}
+
+/**
+ * Corrects a Grammarly result and returns the updated object
+ */
+function correct(result) {
+  const { alerts } = result;
+  return alerts
+    .filter((x) => !x.hidden)
+    .sort((a, b) => b.begin - a.begin)
+    .reduce((prev, currentAlert) => {
+      const { text, diff } = applyTransform(
+        prev.corrected || prev.original,
+        currentAlert
+      );
+      return Object.assign({}, prev, { corrected: text });
+    }, result);
+}
 
 const getRequiredDetailsFromGrammarly = (response) => {
   const alerts = response.alerts.map((alert) => {
@@ -56,13 +97,6 @@ const cleanOutput = (inputQuery) => {
 app.get("/api/v1/check", async function (req, res) {
   try {
     const grammarly = new Grammarly();
-    // const grammarly = new Grammarly({
-    //   auth: {
-    //     grauth:
-    //       "AABJH9lc281M9dT-n67og-TL61sgtqFMAUHLDRowzlgmjw0k8hg4Z12Z-D1Telx26ZoNwkog1V0YwB2j",
-    //     "csrf-token": "AABJH1NwM0PyotrfdTxHxwUZRiZZzXrEbl/aBg",
-    //   },
-    // });
     const { text } = req.query;
     if (text.length > 0) {
       const results = await grammarly.analyse(text).then(correct);
@@ -72,6 +106,7 @@ app.get("/api/v1/check", async function (req, res) {
       res.status(200).send([]);
     }
   } catch (error) {
+    console.error(error);
     res.status(404).send("Error! Something is really wrong.");
   }
 });
